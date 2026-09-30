@@ -18,7 +18,7 @@ library(ggplot2)
 one <- data.frame(x = 1, y = 1, google = 7, twitter = 3)
 
 ggplot(one, aes(x, y)) +
-  geom_taichi(yin = twitter, yang = google) +
+  geom_taichi(yin = twitter, yang = google, limits = c(0, 10)) +
   coord_fixed() +
   theme_taichi()
 
@@ -158,4 +158,65 @@ ggplot(cafes_tg, aes(x = week, y = neighbourhood)) +
   remove_padding() +
   theme_taichi() +
   ggtitle("Espresso (yang) vs matcha (yin)")
+
+## ----explicit-eye, fig.height = 6, fig.alt="The espresso versus matcha grid on one shared scale, with eyes whose size grows with the gap between the two sources; cells where they agree have no eyes."----
+ggplot(cafes_tg, aes(x = week, y = neighbourhood)) +
+  geom_taichi(yin = matcha, yang = espresso,
+              shared_legend = TRUE,
+              yin_name = "orders / 100 customers",
+              explicit = "difference") +
+  remove_padding() +
+  theme_taichi() +
+  ggtitle("Eye size = the gap between the two sources")
+
+## ----explicit-angle, fig.height = 3, fig.alt="Five taichi diagrams tilting from left-leaning to right-leaning as the difference between the two sources goes from negative to positive."----
+tilt <- data.frame(x = 1:5, y = 1, yin = c(1, 3, 5, 7, 9), yang = 9:5)
+
+ggplot(tilt, aes(x, y)) +
+  geom_taichi(yin = yin, yang = yang, shared_limits = TRUE,
+              explicit = "difference", explicit_channel = "angle") +
+  coord_fixed() +
+  theme_taichi()
+
+## ----summary------------------------------------------------------------------
+summ <- taichi_summary(cafes_tg, yin = matcha, yang = espresso,
+                       x = week, y = neighbourhood)
+head(summ[order(summ$rank), ], 5)
+
+## ----diff, fig.height = 5, fig.alt="A diverging heatmap of matcha minus espresso orders, red where espresso leads and blue where matcha does."----
+ggplot(cafes_tg, aes(x = week, y = neighbourhood)) +
+  geom_taichi_diff(yin = matcha, yang = espresso) +
+  remove_padding() +
+  theme_taichi() +
+  ggtitle("matcha - espresso")
+
+## ----check-default------------------------------------------------------------
+taichi_check_palette()
+
+## ----check-balanced-----------------------------------------------------------
+taichi_check_palette(palette = "balanced")
+
+## ----balanced, fig.height = 6, fig.alt="The espresso versus matcha grid drawn with a luminance-matched blue and brick-red palette pair on shared limits."----
+ggplot(cafes_tg, aes(x = week, y = neighbourhood)) +
+  geom_taichi(yin = matcha, yang = espresso,
+              palette = "balanced", shared_limits = TRUE) +
+  remove_padding() +
+  theme_taichi() +
+  ggtitle("A luminance-matched pair")
+
+## ----binned, fig.height = 6, fig.alt="The espresso versus matcha grid with both fish filled from four discrete colour steps on shared limits rather than a continuous ramp."----
+ggplot(cafes_tg, aes(x = week, y = neighbourhood)) +
+  geom_taichi(yin = matcha, yang = espresso,
+              yin_scale  = scale_taichi_yin_binned(n.breaks = 4),
+              yang_scale = scale_taichi_yang_binned(n.breaks = 4),
+              shared_limits = TRUE) +
+  remove_padding() +
+  theme_taichi()
+
+## ----girafe, eval = FALSE-----------------------------------------------------
+# p <- ggplot(cafes_tg, aes(x = week, y = neighbourhood)) +
+#   geom_taichi(yin = matcha, yang = espresso, interactive = TRUE) +
+#   theme_taichi()
+# 
+# ggiraph::girafe(ggobj = p)
 

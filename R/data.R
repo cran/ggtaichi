@@ -11,13 +11,13 @@
 #' \describe{
 #'   \item{msa}{Metropolitan statistical area (Pittsburgh only).}
 #'   \item{week}{week 1 to week 30.}
-#'   \item{week_start}{The Monday date of the week started.}
+#'   \item{week_start}{The date of the Monday the week starts on.}
 #'   \item{category}{One of 9 COVID-related categories: Covid, General Virus,
 #'   Masks, Sanitizing, Social Distancing, Symptoms, Tests, Treatment,
 #'   Working.}
-#'   \item{Twitter}{weekly tweets percentage (\%) in the MSA falling into each
+#'   \item{Twitter}{weekly tweets percentage (%) in the MSA falling into each
 #'   category.}
-#'   \item{Google}{weekly Google search percentage (\%) in the MSA falling into
+#'   \item{Google}{weekly Google search percentage (%) in the MSA falling into
 #'   each category.}
 #' }
 #' @source Just like \code{states_tg}, Google is processed from Google Health
@@ -40,13 +40,13 @@
 #' \describe{
 #'   \item{state}{One of the four states: Florida, Missouri, New York, Texas.}
 #'   \item{week}{week 1 to week 31.}
-#'   \item{week_start}{The Monday date of the week started.}
+#'   \item{week_start}{The date of the Monday the week starts on.}
 #'   \item{category}{One of 9 COVID-related categories: Covid, General Virus,
 #'   Masks, Sanitizing, Social Distancing, Symptoms, Tests, Treatment,
 #'   Working.}
-#'   \item{Twitter}{weekly tweets percentage (\%) in state falling into each
+#'   \item{Twitter}{weekly tweets percentage (%) in state falling into each
 #'   category.}
-#'   \item{Google}{weekly Google search percentage (\%) in state falling into
+#'   \item{Google}{weekly Google search percentage (%) in state falling into
 #'   each category.}
 #' }
 #' @source Just like \code{pitts_tg}, Google is processed from Google Health

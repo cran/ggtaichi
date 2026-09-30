@@ -1,0 +1,429 @@
+library(ggplot2)
+library(ggtaichi)
+
+# ------------------------------------------------------------------
+# The statistics
+# ------------------------------------------------------------------
+
+test_that("taichi_summary computes every statistic per cell", {
+  d <- data.frame(x = 1:3, y = 1, a = c(1, 5, 9), b = c(9, 5, 1))
+  s <- taichi_summary(d, yin = a, yang = b, x = x, y = y)
+
+  expect_s3_class(s, "data.frame")
+  expect_equal(names(s), c("x", "y", "yin", "yang", "difference", "ratio",
+                           "log_ratio", "z", "dominant", "rank"))
+  expect_equal(s$difference, c(-8, 0, 8))
+  expect_equal(s$ratio, c(1 / 9, 1, 9))
+  expect_equal(s$log_ratio, log2(c(1 / 9, 1, 9)))
+  expect_equal(as.character(s$dominant), c("b", "tie", "a"))
+  # widest gaps rank first, and the tie ranks last
+  expect_equal(s$rank, c(1L, 3L, 1L))
+})
+
+test_that("taichi_summary's z standardises each source before differencing", {
+  # b is a units-of-1000 version of a, so the raw difference is dominated by
+  # b while the standardised one is exactly zero.
+  d <- data.frame(a = c(1, 2, 3), b = c(1000, 2000, 3000))
+  s <- taichi_summary(d, yin = a, yang = b)
+  expect_true(all(abs(s$z) < 1e-12))
+  expect_false(all(abs(s$difference) < 1e-12))
+})
+
+test_that("x and y are optional in taichi_summary", {
+  d <- data.frame(a = 1:3, b = 3:1)
+  s <- taichi_summary(d, yin = a, yang = b)
+  expect_false(any(c("x", "y") %in% names(s)))
+  expect_equal(nrow(s), 3)
+})
+
+test_that("a ratio of a non-positive value is NA, never Inf", {
+  d <- data.frame(a = c(1, 0, -2), b = c(2, 4, 4))
+  s <- taichi_summary(d, yin = a, yang = b)
+  expect_equal(s$ratio, c(0.5, NA, NA))
+  expect_false(any(is.infinite(s$ratio), na.rm = TRUE))
+  # and the same rule inside the geom, with a warning this time
+  expect_warning(
+    ggtaichi:::taichi_explicit_stat(c(1, 0), c(2, 4), "ratio"),
+    "positive"
+  )
+})
+
+test_that("taichi_summary rejects non-numeric and missing columns", {
+  d <- data.frame(a = letters[1:3], b = 1:3)
+  expect_error(taichi_summary(d, yin = a, yang = b), "numeric")
+  expect_error(taichi_summary(d, yin = nope, yang = b), "not found")
+  expect_error(taichi_summary(1:3, yin = a, yang = b), "data frame")
+})
+
+test_that("a constant source contributes nothing to z instead of NaN", {
+  expect_equal(ggtaichi:::zscore(rep(2, 4)), rep(0, 4))
+})
+
+# ------------------------------------------------------------------
+# explicit = / explicit_channel =
+# ------------------------------------------------------------------
+
+d3 <- data.frame(x = 1:3, y = 1, yin = c(1, 5, 9), yang = c(9, 5, 1))
+
+test_that("explicit = 'difference' drives eye size, zero gap meaning no eye", {
+  b <- ggplot_build(ggplot(d3, aes(x, y)) +
+    geom_taichi(yin = yin, yang = yang, explicit = "difference"))
+  expect_equal(b$data[[1]]$eye_size, c(0.3, 0, 0.3))
+  expect_equal(b$data[[2]]$eye_size, c(0.3, 0, 0.3))
+
+  # the zero-gap cell draws no eye at all: 2 fish x 2 outer cells
+  sc <- forced_scene(ggplot(d3, aes(x, y)) +
+    geom_taichi(yin = yin, yang = yang, explicit = "difference"))
+  expect_equal(count_circles(sc), 4L)
+})
+
+test_that("explicit = eye_size turns the eyes on by itself", {
+  p <- ggplot(d3, aes(x, y)) +
+    geom_taichi(yin = yin, yang = yang, explicit = "difference")
+  expect_true(isTRUE(p$layers[[1]]$geom_params$eyes))
+})
+
+test_that("the angle channel is signed and symmetric about agreement", {
+  b <- ggplot_build(ggplot(d3, aes(x, y)) +
+    geom_taichi(yin = yin, yang = yang, explicit = "difference",
+                explicit_channel = "angle"))
+  expect_equal(b$data[[1]]$angle, c(-45, 0, 45))
+})
+
+test_that("the border channel does not go through ggplot2's linewidth scale", {
+  b <- ggplot_build(ggplot(d3, aes(x, y)) +
+    geom_taichi(yin = yin, yang = yang, explicit = "difference",
+                explicit_channel = "border"))
+  # the values stay in the range we asked for, rather than being re-ranged
+  # into scale_linewidth_continuous()'s default c(1, 6)
+  expect_equal(b$data[[1]]$border, c(1, 0, 1))
+  expect_true(all(b$data[[1]]$linewidth == 0.1))
+  # and it becomes visible, since the default outline colour is NA
+  expect_equal(unique(b$data[[1]]$colour), "grey20")
+})
+
+test_that("a per-cell border reaches the drawn grob as a line width", {
+  sc <- forced_scene(ggplot(d3, aes(x, y)) +
+    geom_taichi(yin = yin, yang = yang, explicit = "difference",
+                explicit_channel = "border"))
+  lwd <- collect_grobs(sc, "polygon")[[1]]$gp$lwd
+  expect_equal(lwd, c(1, 0, 1) * .pt)
+})
+
+test_that("the radius channel scales by area and shrinks the drawn glyph", {
+  b <- ggplot_build(ggplot(d3, aes(x, y)) +
+    geom_taichi(yin = yin, yang = yang, explicit = "difference",
+                explicit_channel = "radius"))
+  expect_equal(b$data[[1]]$radius, c(1, 0.4, 1))
+
+  span <- function(p) {
+    pg <- collect_grobs(forced_scene(p), "polygon")[[1]]
+    xs <- as.numeric(grid::convertX(pg$x, "pt"))
+    i <- pg$id == 1
+    max(xs[i]) - min(xs[i])
+  }
+  full <- span(ggplot(d3, aes(x, y)) + geom_yin_fish() + coord_fixed())
+  half <- span(ggplot(d3, aes(x, y)) + geom_yin_fish(aes(radius = 0.5)) +
+                 coord_fixed())
+  expect_equal(half, full / 2, tolerance = 1e-6)
+})
+
+test_that("explicit_range overrides the channel default", {
+  b <- ggplot_build(ggplot(d3, aes(x, y)) +
+    geom_taichi(yin = yin, yang = yang, explicit = "difference",
+                explicit_channel = "angle", explicit_range = c(-90, 90)))
+  expect_equal(b$data[[1]]$angle, c(-90, 0, 90))
+  expect_error(
+    geom_taichi(yin = yin, yang = yang, explicit = "difference",
+                explicit_range = 1),
+    "two numbers"
+  )
+})
+
+test_that("the statistic is rescaled across the whole layer, not per facet", {
+  d <- data.frame(
+    x = rep(1:2, 2), y = 1, f = rep(c("A", "B"), each = 2),
+    yin = c(1, 2, 1, 9), yang = c(2, 1, 9, 1)
+  )
+  b <- ggplot_build(ggplot(d, aes(x, y)) +
+    geom_taichi(yin = yin, yang = yang, explicit = "difference",
+                explicit_channel = "angle") +
+    facet_wrap(~f))
+  # panel A's gaps are +-1 against a layer-wide maximum of 8, so they stay
+  # small; rescaling per panel would have made them +-45 too
+  ang <- b$data[[1]]$angle
+  expect_equal(sort(round(ang, 4)), sort(round(c(-45 / 8, 45 / 8, -45, 45), 4)))
+})
+
+test_that("a grid where the two sources agree everywhere degrades quietly", {
+  d <- data.frame(x = 1:3, y = 1, a = c(2, 2, 2), b = c(2, 2, 2))
+  b <- ggplot_build(ggplot(d, aes(x, y)) +
+    geom_taichi(yin = a, yang = b, explicit = "difference"))
+  expect_equal(b$data[[1]]$eye_size, rep(0, 3))
+  ba <- ggplot_build(ggplot(d, aes(x, y)) +
+    geom_taichi(yin = a, yang = b, explicit = "difference",
+                explicit_channel = "angle"))
+  expect_equal(ba$data[[1]]$angle, rep(0, 3))
+})
+
+test_that("explicit refuses to fight the same channel set by hand", {
+  expect_error(
+    geom_taichi(yin = yin, yang = yang, explicit = "difference",
+                explicit_channel = "angle", angle = 30),
+    "drives the same channel"
+  )
+  expect_error(
+    geom_taichi(yin = yin, yang = yang, explicit = "difference",
+                yin_eye_size = 0.2),
+    "drives the same channel"
+  )
+  expect_error(
+    geom_taichi(yin = yin, yang = yang, explicit = "difference",
+                explicit_channel = "border", linewidth = 2),
+    "drives the same channel"
+  )
+  expect_error(
+    geom_taichi(yin = yin, yang = yang, explicit = "difference",
+                eyes = FALSE),
+    "needs the eyes"
+  )
+})
+
+test_that("an unknown explicit method or channel errors", {
+  expect_error(geom_taichi(yin = yin, yang = yang, explicit = "nope"))
+  expect_error(geom_taichi(yin = yin, yang = yang, explicit = "difference",
+                           explicit_channel = "nope"))
+})
+
+test_that("explicit needs numeric sources", {
+  d <- data.frame(x = 1:2, y = 1, a = c("p", "q"), b = c(1, 2))
+  expect_error(
+    ggplot_build(ggplot(d, aes(x, y)) +
+      geom_taichi(yin = a, yang = b, explicit = "difference")),
+    "numeric"
+  )
+})
+
+test_that("explicit = 'none' leaves every channel alone", {
+  b <- ggplot_build(ggplot(d3, aes(x, y)) +
+    geom_taichi(yin = yin, yang = yang))
+  expect_equal(unique(b$data[[1]]$angle), 0)
+  expect_equal(unique(b$data[[1]]$radius), 1)
+  expect_true(all(is.na(b$data[[1]]$border)))
+})
+
+# ------------------------------------------------------------------
+# geom_taichi_diff()
+# ------------------------------------------------------------------
+
+test_that("geom_taichi_diff draws tiles on a symmetric diverging scale", {
+  p <- ggplot(d3, aes(x, y)) + geom_taichi_diff(yin = yin, yang = yang)
+  expect_s3_class(p$layers[[1]]$geom, "GeomTile")
+  b <- ggplot_build(p)
+  sc <- b$plot$scales$get_scales("fill")
+  expect_equal(sc$limits, c(-8, 8))
+  expect_equal(sc$name, "yin - yang")
+})
+
+test_that("geom_taichi_diff centres a ratio on 1, not 0", {
+  p <- ggplot(d3, aes(x, y)) +
+    geom_taichi_diff(yin = yin, yang = yang, method = "ratio")
+  b <- ggplot_build(p)
+  sc <- b$plot$scales$get_scales("fill")
+  expect_equal(mean(sc$limits), 1)
+})
+
+test_that("geom_taichi_diff accepts explicit colours and midpoints", {
+  p <- ggplot(d3, aes(x, y)) +
+    geom_taichi_diff(yin = yin, yang = yang,
+                     palette = c("blue", "white", "red"),
+                     midpoint = 2, symmetric = FALSE, name = "gap")
+  b <- ggplot_build(p)
+  sc <- b$plot$scales$get_scales("fill")
+  expect_null(sc$limits)
+  expect_equal(sc$name, "gap")
+})
+
+test_that("geom_taichi_diff validates its arguments", {
+  expect_error(geom_taichi_diff(yang = yang), "`yin` is required")
+  expect_error(geom_taichi_diff(yin = yin), "`yang` is required")
+  expect_error(geom_taichi_diff(yin = yin, yang = yang, method = "nope"))
+  expect_error(
+    geom_taichi_diff(yin = yin, yang = yang, midpoint = "a"),
+    "single number"
+  )
+})
+
+test_that("an all-agreeing grid does not ask for a zero-width scale", {
+  d <- data.frame(x = 1:3, y = 1, a = rep(2, 3), b = rep(2, 3))
+  b <- ggplot_build(ggplot(d, aes(x, y)) +
+    geom_taichi_diff(yin = a, yang = b))
+  expect_null(b$plot$scales$get_scales("fill")$limits)
+})
+
+# ------------------------------------------------------------------
+# Corrections
+# ------------------------------------------------------------------
+
+test_that("the z label has no stray spaces inside its parentheses", {
+  p <- ggplot(d3, aes(x, y)) + geom_taichi_diff(yin = yin, yang = yang,
+                                               method = "z")
+  expect_equal(ggplot_build(p)$plot$scales$get_scales("fill")$name,
+               "z(yin) - z(yang)")
+})
+
+test_that("taichi_summary survives labels that would repeat a level", {
+  # factor() errors on duplicated levels, which a column compared with itself
+  # (or one called "tie") used to hand it
+  s <- taichi_summary(data.frame(a = 1:3), yin = a, yang = a)
+  expect_equal(as.character(s$dominant), rep("tie", 3))
+  s2 <- taichi_summary(data.frame(tie = c(1, 5), b = c(2, 2)),
+                       yin = tie, yang = b)
+  expect_equal(as.character(s2$dominant), c("b", "tie"))
+})
+
+test_that("a missing value keeps a missing z, even in a constant column", {
+  expect_equal(ggtaichi:::zscore(c(2, NA, 2)), c(0, NA, 0))
+  expect_equal(ggtaichi:::zscore(c(1, NA, 3)), c(-1, NA, 1) / sqrt(2))
+  s <- taichi_summary(data.frame(a = c(2, NA, 2), b = c(1, 2, 3)),
+                      yin = a, yang = b)
+  expect_true(is.na(s$z[2]))
+})
+
+test_that("geom_taichi_diff takes its limits from the tiles' own data", {
+  other <- data.frame(x = 1:2, y = 1, a = c(0, 100), b = c(0, 0))
+  lims <- function(p) ggplot_build(p)$plot$scales$get_scales("fill")$limits
+  # the plot data has no a / b at all: the limits used to be skipped silently
+  expect_equal(lims(ggplot(d3, aes(x, y)) +
+    geom_taichi_diff(yin = a, yang = b, data = other)), c(-100, 100))
+  # a function of the plot data is a layer's data too
+  # (doubling yin turns the gaps -8, 0, 8 into -7, 5, 17)
+  expect_equal(lims(ggplot(d3, aes(x, y)) +
+    geom_taichi_diff(yin = yin, yang = yang,
+                     data = function(dd) transform(dd, yin = yin * 2))),
+    c(-17, 17))
+})
+
+test_that("geom_taichi_diff's palette error names all three accepted forms", {
+  expect_error(geom_taichi_diff(yin = a, yang = b, palette = c("red", "blue")),
+               "exactly three colours")
+  expect_error(geom_taichi_diff(yin = a, yang = b, palette = 42),
+               "exactly three colours")
+})
+
+test_that("a ratio problem is reported once per plot, not once per fish", {
+  dd <- data.frame(x = 1:3, y = 1, a = c(1, 0, 3), b = c(2, 2, 2))
+  msgs <- character()
+  eye <- withCallingHandlers(
+    ggplot_build(ggplot(dd, aes(x, y)) +
+      geom_taichi(yin = a, yang = b, explicit = "ratio"))$data[[1]]$eye_size,
+    warning = function(cnd) {
+      msgs <<- c(msgs, conditionMessage(cnd))
+      invokeRestart("muffleWarning")
+    }
+  )
+  # ratios 0.5 and 1.5 sit the same distance from agreement (1), so the same
+  # eye; measured from 0 instead, they used to come out 0.1 and 0.3
+  expect_equal(eye, c(0.3, NA, 0.3))
+  expect_length(unique(msgs), 1)
+  expect_match(msgs[1], "A ratio needs two positive values")
+  # ggplot2 3.4 evaluates each mapping twice while it builds a plot, so the
+  # count is only pinned where that no longer happens
+  if (utils::packageVersion("ggplot2") >= "3.5.0") expect_length(msgs, 1)
+})
+
+test_that("an all-agreeing grid puts the angle where agreement is mapped", {
+  # the signed mapping sends a zero gap to the middle of the range, so the
+  # degenerate grid must too, whatever the range
+  expect_equal(ggtaichi:::rescale_explicit(c(0, 0), "angle", c(0, 90)),
+               c(45, 45))
+  expect_equal(ggtaichi:::rescale_explicit(c(0, 1), "angle", c(0, 90))[1], 45)
+})
+
+test_that("a ratio of 1 is agreement on every channel", {
+  # A ratio is always positive, so measured from 0 like the other statistics
+  # it gave the cell where the sources were equal a mid-sized eye and a tilt,
+  # where the documentation promises no eye and an upright glyph.
+  d <- data.frame(x = 1:3, y = 1, a = c(2, 4, 1), b = c(2, 2, 2))
+  built <- function(channel) {
+    ggplot_build(ggplot(d, aes(x, y)) +
+      geom_taichi(yin = a, yang = b, explicit = "ratio",
+                  explicit_channel = channel))$data[[1]]
+  }
+  expect_equal(built("eye_size")$eye_size, c(0, 0.3, 0.15))
+  expect_equal(built("angle")$angle, c(0, 45, -22.5))
+  expect_equal(built("border")$border, c(0, 1, 0.5))
+  expect_equal(built("radius")$radius[1:2], c(0.4, 1))
+  # the other statistics keep agreement at 0
+  expect_equal(ggtaichi:::explicit_agreement("ratio"), 1)
+  for (m in c("difference", "log_ratio", "z")) {
+    expect_equal(ggtaichi:::explicit_agreement(m), 0)
+  }
+})
+
+test_that("geom_taichi_diff's error names geom_taichi_diff, not `explicit`", {
+  d <- data.frame(x = 1:2, y = 1, a = c("p", "q"), b = c(1, 2))
+  expect_error(
+    ggplot_build(ggplot(d, aes(x, y)) + geom_taichi_diff(yin = a, yang = b)),
+    "`geom_taichi_diff()` needs numeric", fixed = TRUE
+  )
+  expect_error(
+    ggplot_build(ggplot(d, aes(x, y)) +
+      geom_taichi(yin = a, yang = b, explicit = "difference")),
+    "`explicit` needs numeric", fixed = TRUE
+  )
+})
+
+test_that("infinite channel settings are refused up front", {
+  expect_error(geom_taichi(yin = a, yang = b, explicit = "difference",
+                           explicit_range = c(0, Inf)), "two numbers")
+  expect_error(geom_taichi(yin = a, yang = b, radius_exponent = Inf),
+               "single positive number")
+  expect_error(geom_taichi_diff(yin = a, yang = b, midpoint = Inf),
+               "single number")
+  expect_error(geom_taichi(yin = a, yang = b, yin_eye_size = Inf),
+               "single number or a data column")
+})
+
+test_that("difference tiles over a taichi grid leave the fish's scales alone", {
+  # the diverging scale used to replace the yang scale, painting the yang
+  # fish in the heatmap's colours (and na.value outside its limits)
+  fish_fills <- function(p) {
+    lapply(collect_grobs(forced_scene(p), "polygon"),
+           function(pg) as.character(pg$gp$fill))
+  }
+  alone <- fish_fills(ggplot(d3, aes(x, y)) + geom_taichi(yin = yin, yang = yang))
+  tiles <- ggplot_build(ggplot(d3, aes(x, y)) +
+    geom_taichi_diff(yin = yin, yang = yang))$data[[1]]$fill
+  expect_no_message(
+    p <- ggplot(d3, aes(x, y)) + geom_taichi(yin = yin, yang = yang) +
+      geom_taichi_diff(yin = yin, yang = yang, width = 0.3, height = 0.3)
+  )
+  expect_equal(fish_fills(p), alone)
+  rects <- collect_grobs(forced_scene(p), "rect")
+  expect_true(any(vapply(rects, function(r) {
+    identical(toupper(as.character(r$gp$fill)), toupper(tiles))
+  }, logical(1))))
+})
+
+test_that("an all-agreeing grid gets the agreement end of every channel", {
+  # It used to get the full radius, which on the radius channel means the
+  # widest gap: every glyph drawn at the size of total disagreement, until a
+  # single disagreeing cell shrank all the others to 0.4.
+  r <- ggtaichi:::rescale_explicit
+  ranges <- list(eye_size = c(0.1, 0.3), border = c(0.2, 1),
+                 radius = c(0.4, 1), angle = c(-45, 45))
+  for (ch in names(ranges)) {
+    all_agree <- r(c(0, 0, 0), ch, ranges[[ch]])
+    one_off <- r(c(0, 0, 1), ch, ranges[[ch]])
+    expect_equal(all_agree, one_off[c(1, 1, 1)], info = ch)
+  }
+  # the defaults: no eye, no tilt, the thinnest border, the smallest glyph
+  expect_equal(r(c(0, 0), "eye_size"), c(0, 0))
+  expect_equal(r(c(0, 0), "radius"), c(0.4, 0.4))
+  d <- data.frame(x = 1:3, y = 1, a = c(2, 2, 2), b = c(2, 2, 2))
+  b <- ggplot_build(ggplot(d, aes(x, y)) +
+    geom_taichi(yin = a, yang = b, explicit = "difference",
+                explicit_channel = "radius"))
+  expect_equal(b$data[[1]]$radius, rep(0.4, 3))
+})

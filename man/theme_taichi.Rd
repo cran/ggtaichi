@@ -12,7 +12,8 @@ theme_taichi(
 )
 }
 \arguments{
-\item{base_size}{base font size}
+\item{base_size}{base font size; every text size in the theme scales with
+it}
 
 \item{base_family}{base font family}
 
@@ -22,7 +23,7 @@ theme_taichi(
 }
 \value{
 A \code{\link[ggplot2]{theme}} object that can be added to any
-  ggplot, in the same way as \code{\link[ggplot2]{theme_bw}()}.
+ggplot, in the same way as \code{\link[ggplot2]{theme_bw}()}.
 }
 \description{
 A light theme tuned for the taichi grid: it bottoms the legends, drops the
@@ -34,7 +35,7 @@ reminiscent of rice paper.
 Two of the theme's settings surprise people often enough to be worth
 spelling out. The y axis \emph{title} is blanked, on the assumption that the
 y axis of a taichi grid is a list of category names that already reads as a
-label --- so \code{labs(y = "...")} has no visible effect under this theme.
+label, so \code{labs(y = "...")} has no visible effect under this theme.
 Legend text is rotated 90 degrees, which keeps a wide continuous legend from
 running off the bottom of the plot. Both are ordinary theme elements, so add
 a \code{\link[ggplot2]{theme}()} call afterwards to put them back:

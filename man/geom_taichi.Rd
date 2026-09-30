@@ -11,14 +11,24 @@ geom_taichi(
   yang_name = NULL,
   yin_colors = c("gray100", "gray85", "gray50", "gray35", "gray0"),
   yang_colors = c("#FED7D8", "#FE8C91", "#F5636B", "#E72D3F", "#C20824"),
+  palette = NULL,
   yin_scale = NULL,
   yang_scale = NULL,
   angle = NULL,
   eyes = FALSE,
   yin_eye_size = 0.15,
   yang_eye_size = 0.15,
-  yin_eye_colour = "white",
-  yang_eye_colour = "black",
+  yin_eye_colour = NULL,
+  yang_eye_colour = NULL,
+  explicit = c("none", "difference", "ratio", "log_ratio", "z"),
+  explicit_channel = c("eye_size", "angle", "border", "radius"),
+  explicit_range = NULL,
+  radius_exponent = 0.57,
+  interactive = FALSE,
+  tooltip = NULL,
+  data_id = NULL,
+  onclick = NULL,
+  data_id_by = c("cell", "fish", "source"),
   shared_limits = FALSE,
   shared_legend = FALSE,
   width = NULL,
@@ -29,13 +39,14 @@ geom_taichi(
   linewidth = 0.1,
   linetype = 1,
   show.legend = NA,
+  key_glyph = NULL,
   ...
 )
 }
 \arguments{
 \item{yin}{The unquoted column name (or a literal string naming a column)
 for the yin (dark) fish of the taichi symbol. To pass a name held in a
-variable, use \code{.data[[nm]]} or \code{!!rlang::sym(nm)} --- a bare
+variable, use \code{.data[[nm]]} or \code{!!rlang::sym(nm)}; a bare
 variable would be mapped as a constant fill, exactly as it would be inside
 \code{\link[ggplot2]{aes}()}.}
 
@@ -43,10 +54,12 @@ variable would be mapped as a constant fill, exactly as it would be inside
 for the yang (light) fish of the taichi symbol, as \code{yin}.}
 
 \item{yin_name}{The label name (in quotes) for the legend of the yin
-rendering. Default is \code{NULL} (uses the column name).}
+rendering. Default is \code{NULL} (uses the column name). It titles a
+supplied \code{yin_scale} too, unless that scale object names itself.}
 
 \item{yang_name}{The label name (in quotes) for the legend of the yang
-rendering. Default is \code{NULL} (uses the column name).}
+rendering. Default is \code{NULL} (uses the column name). It titles a
+supplied \code{yang_scale} too, unless that scale object names itself.}
 
 \item{yin_colors}{A color vector, usually as hex codes, for the yin fish
 fill. Used as a gradient for continuous data and as a discrete palette
@@ -55,6 +68,15 @@ for factor/character data. Ignored if \code{yin_scale} is provided.}
 \item{yang_colors}{A color vector, usually as hex codes, for the yang fish
 fill. Used as a gradient for continuous data and as a discrete palette
 for factor/character data. Ignored if \code{yang_scale} is provided.}
+
+\item{palette}{A matched pair of ramps to use instead of
+\code{yin_colors} / \code{yang_colors}: the name of a
+\code{\link{taichi_palette}()} preset (\code{"balanced"},
+\code{"diverging"}, \code{"viridis_pair"}, \code{"brewer_pair"},
+\code{"greyscale_safe"}, \code{"default"}) or a list with \code{yin} and
+\code{yang} colour vectors, such as the result of
+\code{\link{taichi_palette_pair}()}. Default \code{NULL}, which keeps the
+package's historical grey / seal-red pair. See the Palettes section.}
 
 \item{yin_scale}{An optional fill scale for the yin fish: either a ready
 scale object or a scale constructor function (e.g.
@@ -78,29 +100,87 @@ plain v0.1.0 look.}
 glyph radius: a constant (default 0.15) or an unquoted data column to
 encode a variable (see the Eyes section for the rescaling rule).}
 
-\item{yin_eye_colour, yang_eye_colour}{Colour of each eye dot: a constant
-(defaults "white" and "black") or an unquoted data column containing
-colour strings.}
+\item{yin_eye_colour, yang_eye_colour}{Colour of each eye dot: a constant,
+an unquoted data column containing colour strings, or \code{NULL} (the
+default) to take the colour from the theme: the yin eye from the
+theme's \code{paper} and the yang eye from its \code{ink}, which is white
+and black on every light theme and swaps on a dark one. On ggplot2 before
+4.0.0, where themes cannot set geom defaults, \code{NULL} falls back to
+the literal "white" and "black".}
+
+\item{explicit}{Which relationship between the two sources to compute and
+show as a third channel: \code{"none"} (the default), \code{"difference"},
+\code{"ratio"}, \code{"log_ratio"} or \code{"z"}. See the Explicit
+encoding section, and \code{\link{taichi_summary}()} for the definitions.}
+
+\item{explicit_channel}{Where the computed statistic goes:
+\code{"eye_size"} (the default), \code{"angle"}, \code{"border"} or
+\code{"radius"}. Ignored when \code{explicit = "none"}. The chosen
+channel cannot also be set by hand: \code{explicit_channel = "angle"}
+together with an \code{angle} argument, for example, is an error rather
+than a silent override.}
+
+\item{explicit_range}{Two numbers giving the output range of
+\code{explicit_channel}, or \code{NULL} (the default) for that channel's
+own sensible range.}
+
+\item{radius_exponent}{Only used by \code{explicit_channel = "radius"}: the
+exponent relating the statistic to the glyph radius. \code{0.5} is strict
+area scaling; the default \code{0.57} is the cartographic
+apparent-magnitude (Flannery) compensation, which makes larger symbols
+slightly larger than the geometry alone would give because readers
+systematically underestimate the area ratio between big and small
+circles.}
+
+\item{interactive}{If \code{TRUE}, draw the fish (and their eyes) as
+\pkg{ggiraph} grobs carrying \code{tooltip}, \code{data_id} and
+\code{onclick}, so that \code{ggiraph::girafe()} turns the plot into a
+widget. Needs the \pkg{ggiraph} package. Default \code{FALSE}, which
+renders exactly as before and does not touch \pkg{ggiraph}. See the
+Interactivity section.}
+
+\item{tooltip, data_id, onclick}{Optional unquoted data columns overriding
+the interactive attributes. Used only when \code{interactive = TRUE}; by
+default \code{tooltip} is built from the two values, their difference and
+the cell's coordinates, \code{data_id} from \code{data_id_by}, and
+\code{onclick} is empty.}
+
+\item{data_id_by}{Scope of the default \code{data_id}, i.e. what one hover
+highlights: \code{"cell"} (both fish of that glyph; the default),
+\code{"fish"} (one fish), or \code{"source"} (every fish of that source,
+in every cell). Ignored when \code{data_id} is supplied.}
 
 \item{shared_limits}{If \code{TRUE} and both sources are of the same type
 (both continuous, or both discrete), the two auto-built fill scales share
-common limits --- the union range (or union of levels) of \code{yin} and
-\code{yang} --- so equal values read as equal ink. Explicit \code{limits}
-passed through \code{...} take precedence. Default \code{FALSE}.}
+common limits (the union range, or the union of levels, of \code{yin} and
+\code{yang}), so equal values read as equal ink. Explicit \code{limits}
+passed through \code{...} take precedence. As of 0.3.0 the shared limits
+are also pushed into a custom \code{yin_scale} / \code{yang_scale} that
+does not set limits of its own, so a supplied binned scale shares breaks
+too. Default \code{FALSE}.}
 
 \item{shared_legend}{If \code{TRUE}, treats the two sources as directly
 comparable: implies \code{shared_limits = TRUE}, paints both fish with
 \code{yin_colors}, and shows a single legend (the yang guide is
 dropped). Unless \code{yin_name} is supplied, the legend is titled
-"\code{yin} / \code{yang}". Ignored when custom \code{yin_scale} /
-\code{yang_scale} are given. Default \code{FALSE}.}
+"\code{yin} / \code{yang}". Default \code{FALSE}. This is the
+perceptually correct choice whenever the two sources really are
+directly comparable: one ramp means equal values are equal ink by
+construction, with no palette pairing to get wrong (see the Palettes
+section). The cost is that the sources are then told apart only by their
+position inside the glyph: yin is the top bulb, yang the bottom. When
+a custom \code{yang_scale} is supplied it is used as given, so making the
+two palettes agree is then your business; the duplicate yang guide is
+dropped either way.}
 
 \item{width, height}{Width and height of each cell. Typically omitted.}
 
 \item{alpha}{Alpha transparency for the fish fills. A single value for the
 whole layer (see the Styling section).}
 
-\item{na.rm}{If \code{TRUE}, silently removes rows with missing values.}
+\item{na.rm}{If \code{TRUE}, silently removes rows with missing positions
+(a missing fill is drawn in the scale's \code{na.value}; see the Missing
+values section).}
 
 \item{colour}{Outline colour of the fish. A single value for the whole
 layer (see the Styling section).}
@@ -114,22 +194,29 @@ layer (see the Styling section).}
 
 \item{show.legend}{Logical. Should the layer be included in the legend?}
 
+\item{key_glyph}{The legend key glyph, passed on to
+\code{\link[ggplot2]{layer}()}. Both fish default to a small taichi with
+their own half filled (see \code{\link{draw_key_taichi}()}), and the one
+legend \code{shared_legend} keeps fills both halves; pass \code{"rect"}
+for the plain ggplot2 rectangles of earlier versions. Keys only appear
+for discrete fills; a continuous fill gets a colourbar.}
+
 \item{...}{Additional arguments passed to \emph{both} auto-built fill
 scales (e.g., shared \code{limits} or \code{na.value}). Because they go
 to both, an argument that suits only one kind of scale will be rejected by
-the other when \code{yin} and \code{yang} are of different types --- for
-instance a numeric \code{limits} draws ggplot2's "Continuous limits
+the other when \code{yin} and \code{yang} are of different types: a
+numeric \code{limits}, for instance, draws ggplot2's "Continuous limits
 supplied to discrete scale" warning from the discrete fish. For per-fish
 scale options, supply \code{yin_scale} / \code{yang_scale} instead. The
-scale arguments \code{geom_taichi()} fills in itself --- \code{name},
-\code{values} and \code{colors} / \code{colours} --- are not accepted
+scale arguments \code{geom_taichi()} fills in itself (\code{name},
+\code{values} and \code{colors} / \code{colours}) are not accepted
 here; use \code{yin_name} / \code{yang_name} and \code{yin_colors} /
 \code{yang_colors}.}
 }
 \value{
 A \code{ggtaichi_plot} object: the two fish layers plus the fill
-  scales they need, ready to be added to a \code{\link[ggplot2]{ggplot}}
-  with \code{+}. It is not a plot on its own.
+scales they need, ready to be added to a \code{\link[ggplot2]{ggplot}}
+with \code{+}. It is not a plot on its own.
 }
 \description{
 The taichi geom turns each cell of a heatmap-like grid into a taichi
@@ -141,6 +228,12 @@ that fill its two halves. With the optional eyes enabled and mapped to data
 (see \code{eyes}, \code{yin_eye_size}, \code{yang_eye_size}), a single glyph
 can carry up to six dimensions.
 }
+\details{
+A seventh channel, \code{angle}, rotates the glyph, and \code{explicit}
+adds an eighth that is \emph{computed} rather than mapped: the relationship
+between the two sources, shown as a third channel of the same mark. See
+the Explicit encoding section.
+}
 \section{Discrete and continuous fills}{
 
 \code{geom_taichi()} inspects the plot data at \code{+} time. A numeric
@@ -149,17 +242,32 @@ can carry up to six dimensions.
 \code{yang_colors}; a factor, character, or logical column (including
 computed expressions such as \code{factor(week)}) gets a discrete
 \code{\link[ggplot2]{scale_fill_manual}} whose palette is interpolated from
-the same color vectors. With the default vectors the discrete palette skips
-the palest end of the ramp so that no category is invisible on a white
-panel; an explicitly supplied color vector is used as-is. Supply
+the same color vectors. With the default vectors, or a \code{palette}, the
+discrete palette samples the ramp and skips its palest end so that no
+category is invisible on a white panel; an explicitly supplied color vector
+is used as-is, one colour per level in order. Supply
 \code{yin_scale} / \code{yang_scale} to override the automatic choice
-entirely.
+entirely. Each fish has its own fill scale, so a fill scale added to the
+plot afterwards (\code{+ scale_fill_viridis_c()}) replaces the yang one
+only; pass it as \code{yang_scale} instead.
+
+The automatic discrete palette samples a \emph{sequential} ramp, which
+implies that the levels are ordered. That suits an ordered factor and
+overstates an unordered one: if your categories have no natural order,
+supply a qualitative palette through \code{yin_colors} / \code{yang_colors}
+or a scale through \code{yin_scale} / \code{yang_scale}, so the fill does
+not assert a ranking the data does not have.
+
+The glyphs are drawn from the plot's own data, the data the scales are
+chosen from, so \code{geom_taichi()} has no \code{data} argument; to draw
+one fish from other data, use \code{\link{geom_yin_fish}()} /
+\code{\link{geom_yang_fish}()}, which take one.
 
 Because the choice is made when the layer is added, replacing the plot's
 data afterwards keeps the scales picked for the original data. Swapping in
 data of the same types is fine; if the new \code{yin} / \code{yang} columns
 are of the \emph{other} kind, ggplot2 reports a "Discrete value supplied to
-a continuous scale" (or the reverse) at draw time --- rebuild the plot rather
+a continuous scale" (or the reverse) at draw time. Rebuild the plot rather
 than substituting its data.
 }
 
@@ -174,7 +282,8 @@ radius, unless all its non-zero values already lie in \code{(0, 0.5]}, in
 which case they are used directly as radius proportions. Cells whose eye
 size is \code{NA} or \code{0} are drawn without an eye, so a column may
 mix proportions with zeros to suppress individual eyes. A column whose
-values are all equal gets the midpoint radius, 0.175.
+values are all equal, and not already proportions, gets the midpoint
+radius, 0.175.
 }
 
 \section{Styling}{
@@ -203,6 +312,120 @@ A fish whose fill value is \code{NA} is painted in the scale's
 \code{na.value} colour (pass e.g. \code{na.value = "transparent"} through
 \code{...} to change it), while \code{na.rm = TRUE} silently drops rows
 with missing positions.
+}
+
+\section{Time on an axis}{
+
+Putting time on \code{x} makes each row of the grid a time series drawn as
+a row of discrete glyphs, and the series is then encoded in \emph{fill}
+rather than in position, so slope is not encoded at all and a reader
+infers a trend by comparing the shade of neighbouring cells. That is a poor
+substitute for a line. Use a taichi grid for the question \emph{which
+series differ from each other, and where}; put a line chart or a horizon
+plot beside it for \emph{what is the trend}.
+}
+
+\section{Explicit encoding}{
+
+Two fish sharing one position is a \emph{superposition} comparison. It is
+very good at "are these similar?" and "which is bigger here?", and it
+cannot answer "by how much?", because that needs the relationship itself
+to be computed and drawn. \code{explicit} does exactly that, turning one of
+\code{"difference"} (\code{yin - yang}), \code{"ratio"},
+\code{"log_ratio"} or \code{"z"} into a third channel of the glyph. The
+statistics are the ones \code{\link{taichi_summary}()} tabulates, including
+its rule that a ratio of a non-positive value is \code{NA} rather than
+\code{Inf}.
+
+Every channel shows how far the statistic is from agreement, which is 0
+for every statistic except \code{"ratio"}, whose agreement is 1. A ratio
+is measured by its plain distance from 1, so a ratio of 2 reads as a wider
+gap than one of 0.5; use \code{"log_ratio"} when a doubling and a halving
+should look alike.
+
+\code{explicit_channel} chooses where it goes:
+\describe{
+\item{\code{"eye_size"}}{The default, and the tidiest: the eyes already
+exist and are visually subordinate to the fills, so the two fish keep
+carrying the two sources while eye size carries the gap between them.
+A big eye reads as "look here", which is what a big gap means. Cells
+where the two sources agree exactly get no eye at all, so a plain glyph
+means agreement. Implies \code{eyes = TRUE}.}
+\item{\code{"angle"}}{The most \emph{accurate} option. Direction and
+angle are read far more precisely than shading, so encoding the gap as
+tilt makes it legible to a precision the fills can never reach: an
+upright glyph means the two sources agree and the lean shows which way
+and how far. The cost is the symbol's upright orientation, which is why
+it is a choice rather than the default.}
+\item{\code{"border"}}{Outline width. Unobtrusive, and it composes with
+everything else, but the least precise of the four. Because the default
+\code{colour} is \code{NA} (no outline at all), this channel gives the
+outline a visible colour unless you set \code{colour} yourself.}
+\item{\code{"radius"}}{Glyph size, scaled by area rather than by
+diameter so that the eye's area-based reading is the correct one: the
+radius follows the statistic raised to \code{radius_exponent}, a touch
+above the square root that strict area scaling would use. Cells where
+the sources agree shrink; use it when the interesting thing is
+\emph{where} they disagree.}
+}
+
+\code{explicit_range} sets the channel's output range; each channel has a
+sensible default (\code{c(0, 0.3)} of the glyph radius for eyes,
+\code{c(-45, 45)} degrees for angle, \code{c(0, 1)} mm for the border,
+\code{c(0.4, 1)} of the cell for radius). The statistic is rescaled across
+the whole layer, so the mapping is comparable between facets.
+
+\code{\link{geom_taichi_diff}()} draws the same statistic as a diverging
+heatmap when the glyph is not the right chart for the question, and
+\code{\link{taichi_summary}()} returns it as a table.
+}
+
+\section{Palettes}{
+
+The two ramps are compared against each other, so they need to be matched:
+if one spans a wider luminance range than the other then equal values do
+not read as equal ink and one fish looks heavier wherever the data says the
+sources are level. The default grey-and-red pair is \emph{not} matched
+(run \code{\link{taichi_check_palette}()} with no arguments to see the
+numbers) and is kept only for continuity. \code{palette} selects a
+matched pair instead (\code{"balanced"} is the recommended one), and it
+also accepts the output of \code{\link{taichi_palette_pair}()}. It sets
+\code{yin_colors} and \code{yang_colors} together, so passing both is an
+error, and as a ramp: a discrete fill samples it evenly, palest end
+skipped, rather than taking its first colours.
+}
+
+\section{Interactivity}{
+
+Fill is the least accurate channel there is, which is why an interactive
+version of a taichi grid is not a gimmick: hovering supplies the exact
+values without giving up the encoding. With \code{interactive = TRUE} the
+layers emit \pkg{ggiraph} grobs, and the plot becomes a widget when it is
+passed to \code{ggiraph::girafe()}:
+
+\preformatted{  p <- ggplot(cafes_tg, aes(week, neighbourhood)) +
+    geom_taichi(yin = matcha, yang = espresso, interactive = TRUE)
+  ggiraph::girafe(ggobj = p)}
+
+The default tooltip carries both values, their difference, and the cell's
+coordinates. \code{data_id_by} decides what a hover highlights:
+\code{"cell"} (the default) lights up both fish of one glyph,
+\code{"fish"} one fish at a time, and \code{"source"} every fish of one
+source at once. That last one turns the superposition display into a
+single-source display for as long as the pointer rests there, letting a
+reader decompose the comparison instead of doing it in their head.
+\code{tooltip}, \code{data_id} and \code{onclick} take a data column to
+override any of it. The default ids name a cell by its \code{x} and
+\code{y} values, so in a faceted plot the same cell lights up in every
+panel at once. To keep the panels apart, give \code{data_id} an expression
+that includes the facet variable, such as
+\code{paste(state, week, category)}.
+
+The static rendering is unchanged: with \code{interactive = FALSE} the
+package does not touch \pkg{ggiraph} at all, and with it \code{TRUE} the
+same geometry is drawn, only in grobs that carry the extra attributes.
+\pkg{plotly} is not and will not be supported: \code{ggplotly()} cannot
+translate custom grobs, which is exactly what this package draws.
 }
 
 \examples{
@@ -236,5 +459,31 @@ ggplot(data, aes(x, y)) +
               eyes = TRUE,
               yin_eye_size = yang_values,
               angle = 45)
+
+# a matched palette pair, and the gap between the sources as eye size
+
+ggplot(data, aes(x, y)) +
+  geom_taichi(yin = yin_values,
+              yang = yang_values,
+              palette = "balanced",
+              shared_limits = TRUE,
+              explicit = "difference")
+
+# the same gap as tilt: the most accurate channel available
+
+ggplot(data, aes(x, y)) +
+  geom_taichi(yin = yin_values,
+              yang = yang_values,
+              explicit = "difference",
+              explicit_channel = "angle")
+
+# tooltips carry the exact values; needs ggiraph to view
+
+if (requireNamespace("ggiraph", quietly = TRUE)) {
+  p <- ggplot(data, aes(x, y)) +
+    geom_taichi(yin = yin_values, yang = yang_values,
+                interactive = TRUE, data_id_by = "source")
+  # ggiraph::girafe(ggobj = p)
+}
 
 }
